@@ -1,0 +1,151 @@
+---
+title: "data_02_exploration of Irish effort data"
+author: "Jennifer Doyle"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libs, message=FALSE, echo=TRUE, warning=FALSE}
+gc()
+rm(list=ls())
+
+library(RODBC)
+library(tidyverse)
+library(lattice)
+library(lubridate)
+library(mapplots)
+library(sp)
+library(sf)
+library(reshape2)
+library(readxl)
+library(knitr)
+#library(DataCombine)
+library(lattice)
+library(icesTAF)
+library(magrittr)
+library(viridis)
+library(sessioninfo)
+library(stringr)
+
+viridis_colors <- viridis_pal()(3)
+```
+
+# Setup options
+
+```{r setupoptions}
+curr.year <- 2026
+dat.year <- curr.year -1
+fu.n <- "FU19"
+
+
+save.plots <- T # set it up as T or F whether you want to save the plots when running all the chunks or kniting the document
+save.tables <- T # set it up as T or F whether you want to save the tables "propmature"" and the "L50" into .txt files when running all the chunks or knitting the document
+```
+
+# Introduction
+
+The goals of this R Markdown document are to:
+
+* Plot Irish effort data
+* Write TAF data tables
+
+Files before (inside "boot/data/effort"):
+
+  * 19_effort.csv
+  * Number of vessel by year and FU.csv
+ 
+
+Files after (inside "data/data_03_irish_effortdata"):
+
+* FU19_effort_Kwdays.png
+* FU19_vessel_number.png
+
+
+# Data Work Up
+<a href="#top">Back to top</a>
+
+This Rmarkdown document plots the effort data and number of vessels.
+
+
+## Load Irish effort data and plot
+<a href="#top">Back to top</a>
+
+Load in  data series 2005-2022.Aggregated data set.
+This is calculated and held on national network add next year data to the file.
+WGCSE 2015 recommended that effort data in Kw days should be presented as these data are more informative than effort data uncorrected for vessel power.
+Effort for Irish directed fleet (30% landings threshold).
+
+```{r data eff, echo=TRUE, fig.height=7, fig.width=10, warning=FALSE, fig.cap="FU19 Irish Effort (Kw days) by year."}
+#historic aggregated data SALY
+
+eff <- read.csv("BOOT/data/effort/19_effort.csv")
+
+
+neffplot <-  ggplot(eff, aes(year, effort_kw_days, fill=vessel )) + geom_line(aes(colour=vessel), size = 1) + theme_bw() +
+             ylab("Effort in kW days ") + 
+            coord_cartesian(ylim= c(0, 600), xlim=c(1995,dat.year)) +
+           scale_x_continuous(name="\nYear",
+                             breaks = seq(min(as.numeric(as.character(eff$year))),
+                                         max(as.numeric(as.character(eff$year))), by = 2)) +
+          scale_colour_viridis_d(name = "Type", option = "D", end = 0.9) + 
+          theme(axis.text=element_text(size=12),
+                axis.title=element_text(size=12),
+                legend.title=element_blank(),
+                panel.grid=element_blank(),
+                legend.position = "bottom")
+
+neffplot
+
+if (save.plots == T) {
+  ggsave("data/data_02_irish_effortdata/FU19_effort_Kwdays.png")
+}
+
+knitr::kable(eff , digits=3)
+```
+
+
+
+## Load Number of vesselS reporting landings > 10 tonnes.
+<a href="#top">Back to top</a>
+
+```{r data ves, echo=TRUE, fig.height=7, fig.width=10, warning=FALSE, fig.cap="FU19 Number of vessels with landings > 10 t."}
+
+ves <- read.csv("BOOT/data/effort/Number of vessel by year and FU.taf.csv")
+
+ves <- ves %>% filter(FU =='19')
+
+vesplot <- ggplot(ves, aes(year, Number_of_Vessels)) + geom_line(size = 1) + theme_bw() +
+             ylab("Number of vessels with landings > 10 t ") + 
+            coord_cartesian(ylim= c(0, 80), xlim=c(1995, dat.year)) +
+   scale_x_continuous(name="\nYear",
+                     breaks = seq(min(as.numeric(as.character(eff$year))),
+                                 max(as.numeric(as.character(eff$year))), by = 2))  +
+  scale_colour_viridis_d(name = "Type", option = "D", end = 0.9) + 
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=12),
+        legend.title=element_blank(),
+        panel.grid=element_blank(),
+        legend.position = "bottom")
+
+vesplot 
+
+if (save.plots == T) {
+  ggsave("data/data_02_irish_effortdata/FU19_number_vessels.png")
+}
+
+```
+
+
+

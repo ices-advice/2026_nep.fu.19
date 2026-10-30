@@ -1,0 +1,260 @@
+---
+title: "output_01_assessment_summary"
+author: "WGNEPH"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r libs, message=FALSE, echo=TRUE, warning=FALSE}
+gc()
+rm(list=ls())
+
+library(RODBC)
+library(tidyverse)
+library(lattice)
+library(lubridate)
+library(mapplots)
+library(sp)
+library(sf)
+library(reshape2)
+library(readxl)
+library(knitr)
+library(DataCombine)
+library(lattice)
+library(icesTAF)
+library(magrittr)
+library(viridis)
+library(sessioninfo)
+library(stringr)
+```
+
+
+# Setup options
+
+```{r setup options}
+curr.year <- 2026
+dat.year <- curr.year-1
+fu.n <- "FU19"
+
+save.plots <- T # set it up as T or F whether you want to save the plots when running all the chunks or kniting the document
+save.tables <- T # set it up as T or F whether you want to save the tables "propmature"" and the "L50" into .txt files when running all the chunks or knitting the document
+```
+
+# Introduction
+
+The goals of this R Markdown document are to:
+
+* Create Assessment summary Table and calculate Harvest Rate in the fishery year.
+* Write TAF data tables
+
+Files before (inside "model_01_raising_to_international"):
+
+* fishery.summary_FU19.csv
+
+
+Files before (inside "model_02_UWTV"):
+
+* uwtv.summary.statistics_FU19.csv
+
+Files before (inside "bootstrap/data"):
+
+* MSY_nep_stocks.csv
+
+
+Files after (inside "output_01_assessment_summary"):
+
+* exp.wg_FU19.csv
+* nep.stock.wgmixfish_FU19.csv
+* FU19_Harvest_Rate.png
+* FU19_Harvest_Rate.png
+* FU19_Harvest_Rate.png
+
+
+
+## Load data files 
+<a href="#top">Back to top</a>
+
+This UWTV data summary ADG file is calculated in Model_02 folder when new survey data is finalised and kriged to calculate abundance.
+Abundance estimate is used to calculate harvest rate (removals.n/abundance) in the fishery.
+Commercial fishery sampling programme began in 2008.
+UWTV surveys series started in 2006. 
+
+```{r uwtv table}
+
+summ <-read.csv("model/model_01_raising_to_international/fishery.summary_FU19.csv")
+
+
+tv.res <- read.csv("model/model_02_UWTV/uwtv.summary.statistics_FU19.csv")
+
+tv <- tv.res[ , c("year", "abundance", "ci", "abundance.up", "abundance.low")]
+names(tv) <- c("year", "abund", "ci",  "upper", "lower")
+
+# Create new row - Datacombine
+New2 <- c(2008, NA, NA, NA, NA)
+tv <- InsertRow(tv, NewRow = New2, RowNum = 2)
+New3 <- c(2009, NA, NA, NA, NA)
+tv <- InsertRow(tv, NewRow = New3, RowNum = 3)
+New4 <- c(2010, NA, NA, NA, NA)
+tv <- InsertRow(tv, NewRow = New4, RowNum = 4)
+
+# calculate hr and bounds
+exp <- right_join(summ, tv, by="year") %>% mutate(hr = removals.n/abund*100,
+                                                  hr.lower =  removals.n/upper*100,
+                                                  hr.higher =  removals.n/lower*100)
+
+
+# #can remove ogive source in sept just added for spring meeting
+exp$ogive <- 'annual'
+exp <- exp %>%
+  mutate(
+    ogive = ifelse(year >= 2008 & year <= 2024,
+                   "WKCELT",
+                   ifelse(year == 2025,
+                          "WGNEPH_Pooled",
+                          NA))
+  )
+
+#put in same format for report/adg same as FU7- North Sea stocks
+fu19.exp <- exp[c("year", "int.lan.num", "int.dis.num", "int.lan.wgt", "int.dis.wgt", "removals.n", "prop.removals.ret", "dead.disc.r", "dis.rn", "dis.rw", "mw.lan", "mw.dis", "abund", "ci", "upper", "lower", "hr","hr.lower", "hr.higher","ogive")]
+
+knitr::kable(fu19.exp[ ,c(1:8)] , digits=4)
+knitr::kable(fu19.exp[ ,c(1, 9:20)] , digits=4)
+
+fileOut <- paste("output/output_01_assessment_summary/exp.wg_", fu.n, ".csv", sep = "")
+ if (save.tables == T) {
+   write.table(fu19.exp, fileOut, sep=",", row.names = F)
+ }
+```
+
+
+## Reformat for WGMIXFISH Stock object
+<a href="#top">Back to top</a>
+
+```{r mixfish table}
+
+mix <- exp[c("year","abund", "ci", "int.lan.num", "int.dis.num", "removals.n", "hr", "int.lan.wgt", "int.dis.wgt","dis.rn","dead.disc.r",
+             "mw.lan", "mw.dis","dis.rw",
+           "prop.removals.ret")]
+
+mix$survival.rate <- "0.25"
+mix$survival.rate <- as.numeric(mix$survival.rate)
+
+mix <- mix %>%
+  add_column(fu = "fu.19",
+             .before = "year")
+
+names(mix) <- c("fu", "year", "abund", "ci", "landings.n", "discards.n", "removals.numbers", "harvest.rate", "landings.t", "discards.t", 
+                "discard.rate.n", "dead.disc.rate.n", "mean.wt.lan.gr", "mean.wt.dis.gr", "discard.rate.wgt", "prop.removal.ret.n", "survival.rate")
+
+
+ if (save.tables == T) {
+   write.table(mix, "output/output_01_assessment_summary/fu19.nep.stock.wgmixfish.csv",  sep=",", row.names = F)
+ }
+
+tail(mix)
+```
+
+
+## Plot TV abundance and Confidance Intervals and MSY Btrigger.
+<a href="#top">Back to top</a>
+
+Btrigger was established for this stock as FMSYRef4 meeting.
+Check CIs as was a legacy issue last year and were checked for ADG 2018.
+MSY Btrigger estimated at WKFMSYREF4 (ICES, 2016) = 990 million.
+
+```{r abund, echo=FALSE, warning=FALSE, fig.cap="FU19 UWTV abundance estimates (millions of individuals) and Btrigger displayed as dashed line."}
+
+plot <- fu19.exp %>% filter(year >=2011)
+
+    ggplot(plot, aes(x=year, y= abund)) +
+          theme_bw() +
+       geom_ribbon(aes(ymin = lower, ymax = upper),fill = "grey70", alpha = 0.3) +
+          geom_line(size = 1) +
+          geom_point() +
+          geom_errorbar(aes(ymax=upper, ymin=lower, width=0.25)) +
+          theme(panel.grid = element_blank()) +
+          scale_x_continuous(name="\nYear",
+                             breaks = seq(min(plot$year), max(plot$year), 1)) +
+          scale_y_continuous(name = "Abundance (millions)\n",
+                             breaks = seq(0, max(plot$upper)+100, 250),
+                             limits = c(0, max(plot$upper)+100)) + 
+          geom_hline(aes(yintercept=430),colour="#990000",linetype="dashed",size = 0.9) 
+
+if (save.plots == T) {
+  ggsave("output/output_01_assessment_summary/FU19_UWTV_Survey.png")
+}
+```
+
+
+## Plot of estimated mean weights from National sampling programme.
+<a href="#top">Back to top</a>
+
+Plot mean weights (grs) in landings and discards.
+
+```{r mw, echo=FALSE, warning=FALSE, fig.cap="FU19 Mean weights in grs series.Mean weight landings (blue line) and mean weight discards (red line)."}
+
+mw <- fu19.exp [ , c(1, 11,12)]
+mw <- mw %>% gather("mw.lan", "var",2:3)
+names(mw) <- c("year", "type", "wgt")
+
+p3 <- ggplot(mw, aes(x=year, y=wgt, group=type, colour=factor(type))) + 
+        geom_line(size=.75)  +  
+        geom_point() + theme_bw() +
+        xlab("\nYear") +
+       scale_y_continuous(name = "Mean weight (gr)\n",
+                          limits = c(0, 50),
+                          breaks = seq(0, 50, 5)) +
+        scale_colour_manual(labels=c("Discards mean weight", "Landings mean weight"), values=c("black","dark gray")) +
+        theme(panel.grid=element_blank(), legend.position = "bottom") 
+ 
+p3 + theme(axis.text=element_text(size=10),axis.title=element_text(size=10)) + theme(legend.title=element_blank())
+ 
+kable(mw, caption = "Mean weights by year and type")
+if (save.plots == T) {
+  ggsave("output/output_01_assessment_summary/FU19_Mean_weights.png")
+}
+
+```
+
+
+## Plot of Harvest Rates
+<a href="#top">Back to top</a>
+
+Current MSY Harvest Rate of 9.3% for FU19 by WKMSYRef4 (ICES, 2016).
+with errorbars
+
+```{r hr, echo=FALSE, warning=FALSE, fig.cap="FU19 Harvest Rate series."}
+
+fu19.exp <- fu19.exp[order(fu19.exp$year), ]
+
+
+p4 <- ggplot(fu19.exp, aes(year, hr)) +
+       geom_ribbon(aes(ymin = hr.lower, ymax = hr.higher),fill = "grey70", alpha = 0.3) +
+      geom_line(size = 1) +
+    geom_errorbar(aes(ymax=hr.higher, ymin=hr.lower, width=0.25)) +
+    theme_bw() + coord_cartesian(ylim= c(0, 20), xlim=c(2010,dat.year+1)) + 
+    ylab("Harvest rate percent")
+
+
+p4 + geom_hline(aes(yintercept=9.3),size = 1,colour="dark gray", linetype="dashed") + theme(axis.text=element_text(size=10),axis.title=element_text(size=10))
+
+if (save.plots == T) {
+  ggsave("output/output_01_assessment_summary/FU19_Harvest_Rate.png")
+}
+
+```
+
+
+<a href="#top">Back to top</a>

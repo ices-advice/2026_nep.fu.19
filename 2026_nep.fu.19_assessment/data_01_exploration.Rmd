@@ -1,0 +1,622 @@
+---
+title: "data_01_exploration"
+author: "wGNEPH"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libs, message=FALSE, echo=TRUE, warning=FALSE}
+gc()
+rm(list=ls())
+
+library(RODBC)
+library(tidyverse)
+library(lattice)
+library(lubridate)
+library(mapplots)
+library(sp)
+library(sf)
+library(reshape2)
+library(readxl)
+library(knitr)
+#library(DataCombine)
+library(lattice)
+library(icesTAF)
+library(magrittr)
+library(viridis)
+library(sessioninfo)
+library(stringr)
+
+viridis_colors <- viridis_pal()(3)
+```
+# Setup options
+
+```{r setupoptions}
+curr.year <- 2026
+dat.year <- curr.year -1
+fu.n <- "FU19"
+
+save.plots <- T # set it up as T or F whether you want to save the plots when running all the chunks or kniting the document
+save.tables <- T # set it up as T or F whether you want to save the tables "propmature"" and the "L50" into .txt files when running all the chunks or knitting the document
+
+# ewen plot
+source("boot/software/functions/required.funcs.r")
+source("boot/software/functions/ld1.plot.r")
+
+
+save.plots <- T # set it up as T or F whether you want to save the plots when running all the chunks or kniting the document
+save.tables <- T # set it up as T or F whether you want to save the tables "propmature"" and the "L50" into .txt files when running all the chunks or knitting the document
+```
+
+# Introduction
+
+The goals of this R Markdown document are to:
+
+* Preprocess and explore FU19 Intercatch data
+* Write TAF data tables
+
+Files before (inside "boot/data"):
+
+* intercatch folder
+  * fu19_int.land.csv (containing French revision)
+  * nat.qlfd.wg_FU19.csv (historic raised landings and discards)
+  * fu19.nat.qlfd.best.ave.data.review2026 (in year raised landings and discards)
+  * MSY_nep_stocks.csv
+  * NepLand_WGNEPH2026.csv
+  * PropRet_WKCELT_2014.csv
+  * df.WGNEPH.csv (pooled discard data)
+  * StockOverview_FU19.txt
+
+
+Files after (inside "data/data_01_exploration"):
+
+* nat.qlfd.wg_FU19.csv
+* discard.data_FU19.csv
+* discard.data.sex_FU19.csv
+* prop.male.wgcse_FU19.csv
+* national_landings_FU19.csv
+* international.landings_FU19.csv
+
+
+* fu19_discardogive.png
+* fu19_Discard Rate.national.programme.png
+* fu19_Discard Rate.national.programme.sex.png
+* fU19_ProportionMale.png
+* fu19_Proportion Male_quarterly.png
+* fu19_NationalLandings.png
+* fu19_International Landings.png
+* fu19_LFD_plot.png
+
+# Data Work Up
+<a href="#top">Back to top</a>
+
+This Rmarkdown document gives the exploitation pattern from the raised numbers from Irish Sampling programme.
+Where this aggregated data is investigated for WG stock summary
+
+Outputs various WG report figures and tables.
+
+## Load data 
+<a href="#top">Back to top</a>
+
+Load in national raised QLFD object for 2003-2024 where catch samples partitioned by WKCelt ogive.
+
+Load in data year raised QLFD object for Intercatch data submission where catch samples partitioned by WGNEPH pooled data.
+Follows Stock Annex and uses best available recent data.
+Reference document ""01_FU19_Extraction_IntercatchFormat_WGCSE2023.rmd" on national network.
+
+```{r data load, echo=FALSE, results='true'}
+
+qlfd.wg  <- read.csv("boot/data/intercatch/fu19.nat.qlfd.best.ave.data.review2026.csv")
+qlfd.wg<-  qlfd.wg[ , c(-1)]
+qlfd.wg <- qlfd.wg %>%
+  select(year, q, cl, sex, rdis.n.r, rlan.n.r, rdis.wt.r, rlan.wt.r)
+qlfd.hist<- read.csv("boot/data/intercatch/nat.qlfd.wg_FU19.csv")
+
+# Historical data (2008–2024)
+qlfd.hist$source <- "WKCELT"
+
+# New data (2025)
+qlfd.wg$source <- "WGNEPH_Pooled"
+
+qlfd.wg<- rbind(qlfd.wg,qlfd.hist)
+
+fileOut <- paste("data/data_01_exploration/nat.qlfd.wg_", fu.n, ".csv", sep = "")
+ if (save.tables == T) {
+   write.table(qlfd.wg, fileOut, sep=",", row.names = F)
+ }
+
+#Dis.wgt & lan.wgt weight check 
+qlfd.wg %>%
+  group_by(year) %>%
+  summarise(
+    dis.wgt = sum(rdis.wt.r, na.rm = TRUE),
+    lan.wgt = sum(rlan.wt.r, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+
+
+# Derived Annual Ogive Comparison 
+<a href="#top">Back to top</a>
+WKCELT ogive and WGNEPH ogive (best available data 2016-2025)
+
+```{r dig ogive, echo=TRUE, fig.height=7, fig.width=7, warning=FALSE, fig.cap="WKCELT derived discard ogive."}
+
+df.hist <- read.csv("boot/data/intercatch/PropRet_WKCELT_2014.csv") %>%
+  mutate(Year = 2024, cl =CLmm, source = "WKCELT") %>%
+  rename_with(tolower) %>%
+  transmute(year,cl, ogive = propret, source)
+
+
+df.new <- read.csv("boot/data/intercatch/DF.WGNEPH_2026.csv") %>%
+   mutate(source = "WGNEPH_pooled") %>%
+   transmute(year,cl,ogive, source)
+
+df.all <- bind_rows(df.hist %>% mutate(year = as.integer(year)),
+                  df.new  %>% mutate(year = as.integer(year)))
+
+
+df.all %>%
+  group_by(source) %>%
+  summarise(
+    n = n(),
+    n_na_ogive = sum(is.na(ogive)))
+
+
+df.all %>%
+  group_by(source) %>%
+  summarise(
+    min = min(ogive),
+    mean = mean(ogive),
+    median = median(ogive),
+    max = max(ogive))
+
+pr <- ggplot(df.all, aes(x = cl, y = ogive,
+                   colour = source,
+                   linetype = source)) +
+  geom_line(linewidth = 1) +
+  theme_bw() +
+  labs(x = "Carapace Length (mm)",y = "Proportion Retained")
+
+
+pr + geom_hline(yintercept=0.5) +
+  theme(strip.text.x = element_text(size=14, face="bold"))
+
+if (save.plots == T) {
+  ggsave("data/data_01_exploration/fu19_discardogive.png")
+}
+```
+
+
+## Plot the estimated discard rates by number and weight from the national sampling programme.
+<a href="#top">Back to top</a>
+
+```{r dis data1, echo=TRUE, fig.height=7, fig.width=10, warning=FALSE, fig.cap="Discard rates by  number (dark-line) and weight (light-line) from national sampling programme."}
+
+dis <- qlfd.wg %>% group_by(year) %>% summarise( lan.wgt=sum(rlan.wt.r),
+                                                 dis.wgt=sum(rdis.wt.r),
+                                                lan.num=sum(rlan.n.r),
+                                                dis.num=sum(rdis.n.r)) %>% 
+                                      mutate(dis.rate.wt=dis.wgt/(lan.wgt+dis.wgt),
+                                             dis.rate.n=dis.num/(lan.num+dis.num),
+                                             lan.mw=lan.wgt/lan.num*1000,
+                                             dis.mw=dis.wgt/dis.num*1000)
+knitr::kable(dis , digits=3)
+
+fileOut <- paste("data/data_01_exploration/discard.data_", fu.n, ".csv", sep = "")
+ if (save.tables == T) {
+   write.table(dis, fileOut, sep=",", row.names = F)
+ }
+
+
+#gather data and plot
+
+dis1 <- dis[c(1, 6:7)]
+dis1 <- dis1 %>% gather("disw","var" ,2:3)
+names(dis1) <- c("year", "type", "rate")
+
+p1 <- ggplot(dis1, aes(year, rate, group = type, colour=factor(type))) + 
+  geom_line(size = 1) +
+  geom_point() +
+  ylab("% Discard rate") +
+  theme_bw() +
+  coord_cartesian(ylim= c(0, 1), xlim=c(2008,dat.year)) +
+  scale_x_continuous(name="\nYear",
+                     breaks = seq(min(as.numeric(as.character(dis1$year))),
+                                  max(as.numeric(as.character(dis1$year))), by = 2)) +
+  scale_colour_viridis_d(name = "Type", option = "D", end = 0.9) +  
+  theme(axis.text=element_text(size=11),
+        axis.title=element_text(size=11),
+        legend.title=element_blank(),
+        panel.grid=element_blank(),
+        legend.position = "bottom")
+p1
+
+if (save.plots == T) {
+  ggsave("data/data_01_exploration/fu19_Discard Rate.national.programme.png")
+}
+```
+
+
+## Now by sex
+<a href="#top">Back to top</a>
+
+```{r dis data2, echo=TRUE,fig.height= 7, fig.width=10, warning=FALSE, fig.cap="Discard rates by sex in number (dark-line) and weight (light-line) from national sampling programme."}
+
+dis.sex <- qlfd.wg %>% group_by(year, sex) %>% summarise( lan.wgt=sum(rlan.wt.r),
+                                                 dis.wgt=sum(rdis.wt.r),
+                                                lan.num=sum(rlan.n.r),
+                                                dis.num=sum(rdis.n.r)) %>% 
+                                      mutate(dis.rate.byweight=dis.wgt/(lan.wgt+dis.wgt),
+                                             dis.rate.bynumber=dis.num/(lan.num+dis.num))
+knitr::kable(dis.sex , digits=3)
+
+fileOut <- paste("data/data_01_exploration/discard.data.sex_", fu.n, ".csv", sep = "")
+ if (save.tables == T) {
+   write.table(dis.sex, fileOut, sep=",", row.names = F)
+ }
+
+#gather data and plot
+dis.sex <- dis.sex[c(1:2, 7:8)]
+dis.sex <- dis.sex %>% gather("disw","var" ,3:4)
+names(dis.sex) <- c("year", "sex", "type", "rate")
+
+
+
+
+p2 <- ggplot(dis.sex, aes(year, rate, group = type, colour=factor(type))) + 
+      geom_line(size = 1) + 
+      geom_point() +
+      facet_wrap(~sex) +
+      ylab("Discard rate %") + theme_bw() +
+      coord_cartesian(ylim= c(0, 1), xlim=c(2008,dat.year)) +
+      theme(panel.grid=element_blank(), legend.position = "bottom") +
+      scale_x_continuous(name="\nYear",
+                     breaks = seq(min(as.numeric(as.character(dis.sex$year))),
+                                 max(as.numeric(as.character(dis.sex$year))), by = 2)) +
+    scale_colour_viridis_d(name = "Type", option = "D", end = 0.9) +  # Using color-blind friendly palette
+    theme(axis.text=element_text(size=11),
+        axis.title=element_text(size=11),
+        legend.title=element_blank(),
+        panel.grid=element_blank(),
+        legend.position = "bottom")
+
+p2
+
+if (save.plots == T) {
+  
+ggsave("data/data_01_exploration/fu19_Discard Rate.national.programme.sex.png")
+}
+
+```
+
+
+## Plot the sex ratio to see if any trends as the fishery is male biased.
+<a href="#top">Back to top</a>
+
+```{r sr, echo=TRUE, fig.height=7, fig.width=10, warning=FALSE, fig.cap="% of Male in Catches and Landings from national sampling programme."}
+
+pd <- qlfd.wg %>% group_by(year, sex) %>% summarise(lan.num=sum(rlan.n.r),
+                                           dis.num=sum(rdis.n.r))  %>%
+                                      mutate(cat.num= lan.num+dis.num)
+
+pr <- pd %>% gather("type", "nb", 3:5)
+
+#prop male in landings
+tln <- pr %>% filter(type=="lan.num") %>% group_by(year) %>% summarise(n=sum(nb))
+tlm <- pr %>% filter(type=="lan.num", sex =="Male") %>% group_by(year) %>% summarise(n=sum(nb))
+prop.m.ln <-left_join(tlm,tln, by="year") %>% mutate(prop.male.land = (n.x/n.y))
+
+
+#prop male in catches
+tcn <- pr %>% filter(type=="cat.num") %>% group_by(year) %>% summarise(n=sum(nb))
+tcm <- pr %>% filter(type=="cat.num", sex =="Male") %>% group_by(year) %>% summarise(n=sum(nb))
+prop.m.cn <-left_join(tcm,tcn, by="year") %>% mutate(prop.male.catch = (n.x/n.y))
+pro <-left_join(prop.m.cn,prop.m.ln, by="year") 
+pro <- pro[c(1, 4,7)]
+
+knitr::kable(pro, digits=2) 
+
+fileOut <- paste("data/data_01_exploration/prop.male.wgcse_", fu.n, ".csv", sep = "")
+ if (save.tables == T) {
+   write.table(pro, fileOut, sep=",", row.names = F)
+ }
+
+
+p3 <- ggplot(data = pro, aes(x = year)) +
+  geom_line(aes(y= prop.male.catch, colour = "Catch"), size = 1) + 
+  geom_line(aes(y= prop.male.land, colour = "Landings"), size = 1) +
+  geom_point(aes(y= prop.male.catch, colour = "Catch"), size = 2) +
+  geom_point(aes(y= prop.male.land, colour = "Landings"), size = 2) +
+  theme_bw() + ylab("% male by number")  +
+  coord_cartesian(ylim= c(0, 1), xlim=c(2008, dat.year)) +
+  theme(panel.grid=element_blank(), legend.position = "bottom") +
+  scale_x_continuous(name="\nYear",
+                     breaks = seq(min(as.numeric(as.character(pro$year))),
+                                 max(as.numeric(as.character(pro$year))), by = 2)) +
+    scale_colour_viridis_d(name = "Type", option = "D", end = 0.9) +  # Using color-blind friendly palette
+    theme(axis.text=element_text(size=11),
+        axis.title=element_text(size=11),
+        legend.title=element_blank(),
+        panel.grid=element_blank(),
+        legend.position = "bottom")
+
+p3
+
+if (save.plots == T) {
+  ggsave("data/data_01_exploration/fu19_ProportionMale.png")
+}
+```
+
+
+
+## Plot the sex ratio by quarter.
+<a href="#top">Back to top</a>
+
+```{r srq, echo=TRUE, fig.height=7, fig.width=10,warning=FALSE, fig.cap="% of Male in Catches and Landings from national sampling programme by qtr."} 
+
+pd <- qlfd.wg %>% group_by(year, q, sex) %>% summarise(lan.num=sum(rlan.n.r),
+                                           dis.num=sum(rdis.n.r))  %>%
+                                      mutate(cat.num= lan.num+dis.num)
+
+pr <- pd %>% gather("type", "nb", 4:6)
+
+
+#prop male in landings
+tln <- pr %>% filter(type=="lan.num") %>% group_by(year, q) %>% summarise(n=sum(nb))
+tlm <- pr %>% filter(type=="lan.num", sex =="Male") %>% group_by(year, q) %>% summarise(n=sum(nb))
+
+# make join field
+tln$yq <- as.character(tln$year*100 + tln$q)
+tlm$yq <- as.character(tlm$year*100 + tlm$q)
+
+prop.m.ln <-left_join(tlm,tln, by="yq") %>% mutate(prop.male.land = (n.x/n.y))
+
+
+#prop male in catches
+tcn <- pr %>% filter(type=="cat.num") %>% group_by(year, q) %>% summarise(n=sum(nb))
+tcm <- pr %>% filter(type=="cat.num", sex =="Male") %>% group_by(year, q) %>% summarise(n=sum(nb))
+
+# make join field
+tcn$yq <- as.character(tcn$year*100 + tcn$q)
+tcm$yq <- as.character(tcm$year*100 + tcm$q)
+
+
+prop.m.cn <-left_join(tcm,tcn, by="yq") %>% mutate(prop.male.catch = (n.x/n.y))
+proq <-left_join(prop.m.cn,prop.m.ln, by="yq") 
+proq <- proq[c(1, 2, 8, 15)]
+names(proq) <- c("year", "q", "prop.male.catch", "prop.male.land")
+
+ggplot(data = proq %>% filter(year >=2008), aes(x = q)) +
+  geom_line(aes(y= prop.male.catch, colour = "Catch"), size = 1) + 
+  geom_line(aes(y= prop.male.land, colour = "Landings"), size = 1) +
+  geom_point(aes(y= prop.male.catch, colour = "Catch"), size = 2) +
+  geom_point(aes(y= prop.male.land, colour = "Landings"), size = 2) +
+  theme_bw() + ylab("% male by number") + facet_wrap(~ year, nrow=3) +
+    scale_colour_viridis_d(name = "Type", option = "D", end = 0.9) +  # Using color-blind friendly palette
+    theme(axis.text=element_text(size=11),
+        axis.title=element_text(size=11),
+        legend.title=element_blank(),
+        panel.grid=element_blank(),
+        legend.position = "bottom")
+
+if (save.plots == T) {
+  ggsave("data/data_01_exploration/fu19_Proportion Male_quarterly.png")
+}
+```
+# Irish fishery pattern
+First calculate exploitation pattern.
+Landings and discards by weight (tonne) and number ('000s).
+Estimated mean weight (gr) in landings and discards.
+Discard rates by weight (tonne) and number ('000s) from the raised derived data using the annual discard ogive.
+Removals in number.
+Dead discard rate by weight (tonne) and number ('000s). 
+Proportion Removals retained by number ('000s).
+Discard survival estimated as 25%.
+```{r summary table}
+
+summ <- qlfd.wg %>% group_by(year) %>% summarise(lan.num =sum(rlan.n.r)/1000, 
+                                              lan.wgt =sum(rlan.wt.r),
+                                              dis.num =sum(rdis.n.r)/1000,
+                                              dis.wgt =sum(rdis.wt.r))  %>%
+                                    mutate  (mw.lan = (lan.wgt/lan.num),
+                                             mw.dis = (dis.wgt/dis.num),
+                                             dis.rn = dis.num/(lan.num + dis.num),
+                                             dis.rw = dis.wgt/(lan.wgt + dis.wgt),
+                                             removals.n = (dis.num * 0.75 + lan.num),
+                                             dead.disc.r = 1-lan.num/removals.n,
+                                             dead.disc.wgt = dis.wgt * 0.75,
+                                             prop.removals.ret =lan.num/removals.n)
+
+
+
+knitr::kable(summ[ ,c(1:7)] , digits=4)
+knitr::kable(summ[ ,c(1, 8:13)] , digits=4)
+
+fileOut <- paste("data/data_01_exploration/national.fishery.summary_", fu.n, ".csv", sep = "")
+ if (save.tables == T) {
+   write.table(summ, fileOut, sep=",", row.names = F)
+ }
+```
+
+
+# National Landings.
+<a href="#top">Back to top</a>
+
+Using the revised landings from 2008 - 2017.
+At WGCSE 2019 Irish landings were revised back to 2008.
+Revisions were in the order of +/- 5%. 
+In one year it was 10%.
+Also including revisions for sales notes under 10s in 2018.
+Generate fishery exploitation pattern according to annex.
+
+```{r nat land, echo=TRUE, message=FALSE, fig.height=10, fig.width=7, warning=FALSE, fig.cap="FU19 Irish  Landings (t) by quarter."} 
+
+nat <- read.csv("boot/data/intercatch/NepLand_WGNEPH2026.csv")
+
+nat$LiveWt <-as.numeric(as.character(nat$LiveWt))
+nat$LiveWtRaisedToDecs <-as.numeric(as.character(nat$LiveWtRaisedToDecs))
+nat$LiveWt <- nat$LiveWt/1000
+nat$Quarter <- as.factor(nat$Quarter)
+nat <- nat %>% filter(FU==19)
+
+ggplot(nat, aes(Year, LiveWt))+ geom_col(aes(fill = Quarter)) + 
+       theme_bw() + ylab("Landings in Tonnes") +
+  theme(panel.grid.major=element_blank(), panel.grid.minor=element_blank()) +
+  scale_x_continuous(breaks = c(seq(min(nat$Year), max(nat$Year), by = 5), max(nat$Year))) +
+  scale_y_continuous(breaks = seq(0, 3800, 200)) 
+
+
+if (save.plots == T) {
+  ggsave("data/data_01_exploration/fu19_NationalLandings.png")
+}
+
+nl <- nat %>% group_by(Year, Quarter) %>% summarise(total=sum(LiveWt)) %>% spread(Quarter, total)
+nl$Total<- rowSums(nl[,2:5], na.rm=TRUE)
+
+knitr::kable(nl , digits=3)
+
+fileOut <- paste("data/data_01_exploration/national.landings_", fu.n, ".csv", sep = "")
+ if (save.tables == T) {
+   write.table(nl, fileOut, sep=",", row.names = F)
+ }
+```
+
+
+## Check if missing Catch sampling in time-series.
+<a href="#top">Back to top</a>
+
+There is one year 2019 q3 and earlier in time series as sampling was developing.
+This has been accounted for in the national raising and the data object qlfd accounts for this.
+Here is a check of this.
+
+```{r check , echo=TRUE, warning=FALSE, fig.height=10, fig.width=7}
+test <- qlfd.wg %>% group_by(year) %>% summarise(lan.num =sum(rlan.n.r), 
+                                               lan.wgt =sum(rlan.wt.r),
+                                               dis.num =sum(rdis.n.r),
+                                               dis.wgt =sum(rdis.wt.r))
+
+
+#raise to missing sample quarters as international data is not by quarter
+check <- qlfd.wg %>% group_by(year) %>% summarise(rlan.wt=sum(rlan.wt.r), rdis.wt=sum(rdis.wt.r))
+ 
+land1 <- nat %>% rename_at("Year",~"year") %>% group_by(year) %>% summarise(tot =sum(LiveWt))
+test <- left_join(check, land1, by="year")
+test$rf1 <- with(test, tot/rlan.wt)
+
+knitr::kable(test , digits=5)
+```
+
+
+
+
+# InterNational Landings 
+<a href="#top">Back to top</a>
+
+The most up to date landings from each participant country is included here from Intercatch.
+
+```{r int land, echo=TRUE, fig.height=10, fig.width=7, message=FALSE, fig.cap="FU19 International Landings (t)."}
+
+int.land <- read.csv("boot/data/intercatch/fu19_int.land.csv")
+int.land <- gather(int.land,"country", "landings",3:6) 
+
+
+i <- int.land %>% filter(Year >= '1999')
+pi <- ggplot(i, aes(Year, landings, fill=country)) + geom_bar(stat="identity", position= "stack") + 
+  theme_bw() + ylab("Landings in Tonnes") +
+  scale_fill_manual(breaks = c("France", "Belgium", "Ireland", "UK"),
+                     values=c("#56B4E9","#E69F00","#009E73", "#CC6666")) +
+  theme(panel.grid.major=element_blank(), panel.grid.minor=element_blank()) +
+  scale_x_continuous(breaks = c(seq(min(int.land$Year), max(int.land$Year), by = 5), max(int.land$Year))) +
+  scale_y_continuous(breaks = seq(0, 3800, 200))
+
+pi + theme(axis.text=element_text(size=10),axis.title=element_text(size=10)) 
+
+
+if (save.plots == T) {
+  ggsave("data/data_01_exploration/fu19_International Landings.png", width=12, height = 8)
+}
+
+
+int.land <- int.land %>%
+  mutate(across(everything(), ~ replace_na(., 0))) %>%
+  pivot_wider(
+    names_from = country,
+    values_from = landings,
+    values_fill = 0)
+
+int.land$total <- rowSums(int.land[, 3:6], na.rm = TRUE)
+
+knitr::kable(int.land, digits = 2)
+
+fileOut <- paste("data/data_01_exploration/international.landings.", fu.n, ".csv", sep = "")
+ if (save.tables == T) {
+   write.table(int.land, fileOut, sep=",", row.names = F)
+ }
+```
+
+
+# Commercial Length Frequency Distributions
+<a href="#top">Back to top</a>
+
+Here we write the data  in the format for the ld1.plot.
+The vertical lines indicate the minimum conservation reference size (25 mm) and the 35 mm visual reference level.
+
+```{r ep , echo=TRUE, warning=FALSE, fig.height=8, fig.width=8, fig.cap="FU19 Commercial LFD."}
+
+fu19.ld <- qlfd.wg[c(1:6)]
+fu19.ld <- fu19.ld %>% gather("rdis.n.r","n" ,5:6)
+names(fu19.ld) <- c("year", "q", "cl", "sex", "type", "n")
+
+fu19.ld <- fu19.ld %>% group_by(Year= year, Length= cl, Sex=sex, Type=type) %>% summarise(n=sum(n))
+fu19.ld <- spread(fu19.ld, Type, n)
+fu19.ld$Catch <- fu19.ld$rdis.n.r  + fu19.ld$rlan.n.r
+names(fu19.ld) <- c("Year",  "Length", "Sex", "Discards", "Landings", "Catch")
+## here we write the CSV file in the fromat for the ld1.plot
+
+
+df <- as.data.frame(fu19.ld)
+#summary(df)
+
+#the names of the data must be
+#Year, Sex, Length, Landings, Discards, Catch
+#in this instance they already are so we don't have to worry about it.
+#call the function, parameter order is
+#1 data frame
+#2 title for the plot
+#3 minimum year to start from
+#4 maximum year to run to
+#5 Minimum landing size
+#6 reference line (typically 35mm so that we can see the proportion of the stock which is considered #fully selected.
+
+
+png("data/data_01_exploration/fu19_LFD.plot.png", height=1700, width=1200, res=200)
+
+plot.ld(df, "FU19", 2003, 2026, 25, 35)
+
+dev.off()
+
+plot.ld(df, "FU19", 2003, 2026, 25, 35)
+
+```
+
+
+## Session
+<a href="#top">Back to top</a>
+```{r info , echo=TRUE, warning=FALSE, fig.height=8, fig.width=8}
+session_info()
+
+```
